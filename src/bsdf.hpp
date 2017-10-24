@@ -3,10 +3,8 @@
 
 #pragma once
 
-#include "geometric.hpp"
 #include "util.hpp"
-#include "light-transport/sampling.hpp"
-#include "light-transport/util.hpp"
+#include "sampling.hpp"
 
 // BRDF Lexicon
 // ============================================================================
@@ -75,7 +73,7 @@ struct IdealDiffuse : public BSDF
 
 	virtual float eval(const float3 & Wo, const float3 & Wi) const override final
 	{
-		return ANVIL_INV_PI;
+		return INV_PI;
 	}
 };
 
@@ -162,7 +160,6 @@ struct DialectricBSDF : public BSDF
 		if (reflection_constraint(Wi, Wo)) return 1.0f;
 		else return 0.0f;
 	}
-
 };
 
 #endif

@@ -3,7 +3,6 @@
 
 #pragma once
 
-#include "geometric.hpp"
 #include "util.hpp"
 
 //////////////
@@ -68,6 +67,5 @@ static inline bool refraction_constraint(const float3 &wi, const float3 &wo, flo
 	float dotP = -wi.x*wo.x*eta - wi.y*wo.y*eta - std::copysign(cosThetaT, wi.z)*wo.z;
 	return std::abs(dotP - 1.0f) < DiracAcceptanceThreshold;
 }
-
 
 #endif

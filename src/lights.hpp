@@ -3,10 +3,9 @@
 
 #pragma once
 
-#include "geometric.hpp"
 #include "util.hpp"
-#include "light-transport/sampling.hpp"
-#include "light-transport/util.hpp"
+#include "sampling.hpp"
+#include "math-util.hpp"
 
 struct Light
 {
@@ -50,7 +49,6 @@ struct AreaLight : public Light
 		pdf = rSq / (cosTheta * quad->area);
 
 		return intensity * (1.f / (distance)); // linear
-
 	}
 };
 

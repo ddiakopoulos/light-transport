@@ -4,11 +4,8 @@
 #pragma once
 
 #include "geometric.hpp"
-#include "geometry.hpp"
-#include "light-transport/bsdf.hpp"
-#include "light-transport/util.hpp"
-
-using namespace avl;
+#include "bsdf.hpp"
+#include "math-util.hpp"
 
 struct Quad
 {

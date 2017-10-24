@@ -13,6 +13,7 @@
 #include <exception>
 #include <sstream>
 #include <memory>
+#include <random>
 
 #include "linalg_util.hpp"
 #include "stb/stb_image.h"
@@ -28,25 +29,29 @@
 #define INV_TWO_PI    0.1591549430918953
 #define INV_HALF_PI   0.6366197723675813
 
-template <typename T, int C>
-struct image_buffer
+template<typename T>
+T clamp(const T & val, const T & min, const T & max)
 {
-    const int2 size;
-    T * alias;
-    struct delete_array { void operator()(T * p) { delete[] p; } };
-    std::unique_ptr<T, decltype(image_buffer::delete_array())> data;
-    image_buffer() : size({ 0, 0 }) { }
-    image_buffer(const int2 size, T * ptr) : size(size) { alias = ptr; }
-    image_buffer(const int2 size) : size(size), data(new T[size.x * size.y * C], delete_array()) { alias = data.get(); }
-    image_buffer(const image_buffer<T, C> & r) : size(r.size), data(new T[size.x * size.y * C], delete_array())
-    {
-        alias = data.get();
-        if (r.alias) std::memcpy(alias, r.alias, size.x * size.y * C * sizeof(T));
-    }
-    int size_bytes() const { return C * size.x * size.y * sizeof(T); }
-    int num_pixels() const { return size.x * size.y; }
-    T & operator()(int y, int x) { return alias[y * size.x + x]; }
-    T & operator()(int y, int x, int channel) { return alias[C * (y * size.x + x) + channel]; }
+    return std::min(std::max(val, min), max);
+}
+
+inline float to_radians(float degrees) { return degrees * float(PI) / 180.f; }
+inline float to_degrees(float radians) { return radians * 180.f / float(PI); }
+
+class UniformRandomGenerator
+{
+    std::random_device rd;
+    std::mt19937_64 gen;
+    std::uniform_real_distribution<float> full{ 0.f, 1.f };
+    std::uniform_real_distribution<float> safe{ 0.001f, 0.999f };
+    std::uniform_real_distribution<float> two_pi{ 0.f, float(TWO_PI) };
+public:
+    UniformRandomGenerator() : rd(), gen(rd()) { }
+    float random_float() { return full(gen); }
+    float random_float(float max) { std::uniform_real_distribution<float> custom(0.f, max); return custom(gen); }
+    float random_float_sphere() { return two_pi(gen); }
+    float random_float_safe() { return safe(gen); }
+    int random_int(int max) { std::uniform_int_distribution<int> dInt(0, max); return dInt(gen); }
 };
 
 class scoped_timer
@@ -102,116 +107,6 @@ inline std::vector<uint8_t> read_file_binary(const std::string pathToFile)
 
     fclose(f);
     return fileBuffer;
-}
-
-template <typename T> uint16_t normalize(T value)
-{
-    const float min = std::numeric_limits<T>::min();
-    const float max = std::numeric_limits<T>::max();
-    const float result = (value - min) / (max - min);
-
-    float new_float = result * std::numeric_limits<uint16_t>::max();
-
-    if (new_float > std::numeric_limits<uint16_t>::max()) new_float = std::numeric_limits<uint16_t>::max();
-    if (new_float < 0) new_float = 0;
-
-    float round_float = std::nearbyintf(new_float);
-    uint16_t round_int = static_cast<uint16_t>(round_float);
-
-    return round_int;
-}
-
-inline float to_luminance(float r, float g, float b) { return 0.2126f * r + 0.7152f * g + 0.0722f * b; }
-
-inline image_buffer<uint16_t, 1> rgb_to_greyscale(const int width, const int height, const int nBytes, const uint8_t * rawBytes)
-{
-    image_buffer<uint16_t, 1> buffer({ width, height });
-
-    for (int y = 0; y < height; y++)
-    {
-        for (int x = 0; x < width; ++x)
-        {
-            const float r = normalize<uint8_t>(rawBytes[nBytes * (y * width + x) + 0]);
-            const float g = normalize<uint8_t>(rawBytes[nBytes * (y * width + x) + 1]);
-            const float b = normalize<uint8_t>(rawBytes[nBytes * (y * width + x) + 2]);
-            buffer(y, x) = to_luminance(r, g, b);
-        }
-    }
-    return buffer;
-}
-
-inline image_buffer<uint16_t, 1> rgb_to_greyscale_stb(std::vector<uint8_t> & binaryData)
-{
-    int width, height, nBytes;
-    auto data = stbi_load_from_memory(binaryData.data(), (int)binaryData.size(), &width, &height, &nBytes, 0);
-    auto buffer = rgb_to_greyscale(width, height, nBytes, data);
-    stbi_image_free(data);
-    return buffer;
-}
-
-template<typename T>
-T clamp(const T & val, const T & min, const T & max)
-{
-    return std::min(std::max(val, min), max);
-}
-
-inline float to_radians(float degrees) { return degrees * float(PI) / 180.f; }
-inline float to_degrees(float radians) { return radians * 180.f / float(PI); }
-
-inline float4x4 make_projection_matrix(float l, float r, float b, float t, float n, float f)
-{
-    return{ { 2 * n / (r - l),0,0,0 },{ 0,2 * n / (t - b),0,0 },{ (r + l) / (r - l),(t + b) / (t - b),-(f + n) / (f - n),-1 },{ 0,0,-2 * f*n / (f - n),0 } };
-}
-
-inline float4x4 make_perspective_matrix(float vFovInRadians, float aspectRatio, float nearZ, float farZ)
-{
-    const float top = nearZ * std::tan(vFovInRadians / 2.f), right = top * aspectRatio;
-    return make_projection_matrix(-right, right, -top, top, nearZ, farZ);
-}
-
-inline float4x4 make_rigid_transformation_matrix(const float4 & rotation, const float3 & translation)
-{
-    return{ { qxdir(rotation),0 },{ qydir(rotation),0 },{ qzdir(rotation),0 },{ translation,1 } };
-}
-
-// Rigid transformation value-type
-struct Pose
-{
-    float4      orientation;        // Orientation of an object, expressed as a rotation quaternion from the base orientation
-    float3      position;           // Position of an object, expressed as a translation vector from the base position
-
-    Pose() : Pose({ 0,0,0,1 }, { 0,0,0 }) {}
-    Pose(const float4 & orientation, const float3 & position) : orientation(orientation), position(position) {}
-    explicit    Pose(const float4 & orientation) : Pose(orientation, { 0,0,0 }) {}
-    explicit    Pose(const float3 & position) : Pose({ 0,0,0,1 }, position) {}
-
-    Pose        inverse() const { auto invOri = qinv(orientation); return{ invOri, qrot(invOri, -position) }; }
-    float4x4    matrix() const { return make_rigid_transformation_matrix(orientation, position); }
-    float3      xdir() const { return qxdir(orientation); } // Equivalent to transform_vector({1,0,0})
-    float3      ydir() const { return qydir(orientation); } // Equivalent to transform_vector({0,1,0})
-    float3      zdir() const { return qzdir(orientation); } // Equivalent to transform_vector({0,0,1})
-
-    float3      transform_vector(const float3 & vec) const { return qrot(orientation, vec); }
-    float3      transform_coord(const float3 & coord) const { return position + transform_vector(coord); }
-    float3      detransform_coord(const float3 & coord) const { return detransform_vector(coord - position); } // Equivalent to inverse().transform_coord(coord), but faster
-    float3      detransform_vector(const float3 & vec) const { return qrot(qinv(orientation), vec); } // Equivalent to inverse().transform_vector(vec), but faster
-
-    Pose        operator * (const Pose & pose) const { return{ qmul(orientation,pose.orientation), transform_coord(pose.position) }; }
-};
-
-inline bool operator == (const Pose & a, const Pose & b)
-{
-    return (a.position == b.position) && (a.orientation == b.orientation);
-}
-
-inline bool operator != (const Pose & a, const Pose & b)
-{
-    return (a.position != b.position) || (a.orientation != b.orientation);
-}
-
-inline std::ostream & operator << (std::ostream & o, const Pose & r)
-{
-    return o << "{" << r.position << ", " << r.orientation << "}";
 }
 
 ///////////////////////////////////
@@ -360,63 +255,10 @@ public:
     void close() { glfwSetWindowShouldClose(window, 1); }
 };
 
-struct Bounds2D
-{
-    float2 _min = { 0, 0 };
-    float2 _max = { 0, 0 };
-
-    Bounds2D() {}
-    Bounds2D(float2 min, float2 max) : _min(min), _max(max) {}
-    Bounds2D(float x0, float y0, float x1, float y1) { _min.x = x0; _min.y = y0; _max.x = x1; _max.y = y1; }
-
-    float2 min() const { return _min; }
-    float2 max() const { return _max; }
-
-    float2 size() const { return max() - min(); }
-    float2 center() const { return{ (_min.x + _max.y) / 2, (_min.y + _max.y) / 2 }; }
-    float area() const { return (_max.x - _min.x) * (_max.y - _min.y); }
-
-    float width() const { return _max.x - _min.x; }
-    float height() const { return _max.y - _min.y; }
-
-    bool contains(const float px, const float py) const { return px >= _min.x && py >= _min.y && px < _max.x && py < _max.y; }
-    bool contains(const float2 & point) const { return contains(point.x, point.y); }
-
-    bool intersects(const Bounds2D & other) const
-    {
-        if ((_min.x <= other._min.x) && (_max.x >= other._max.x) &&
-            (_min.y <= other._min.y) && (_max.y >= other._max.y)) return true;
-        return false;
-    }
-};
-
 struct screen_viewport
 {
     float2 bmin, bmax;
     GLuint texture;
 };
-
-
-constexpr const char fullscreen_quad_vert[] = R"(#version 330
-    layout(location = 0) in vec3 position;
-    layout(location = 1) in vec2 texcoord;
-    uniform mat4 u_mvp;
-    out vec2 v_texcoord;
-    void main()
-    {
-	    gl_Position = u_mvp * vec4(position.xyz, 1);
-        v_texcoord = texcoord; //(position.xy + vec2(1, 1)) / 2.0;
-    }
-)";
-
-constexpr const char fullscreen_quad_frag[] = R"(#version 330
-    uniform sampler2D s_diffuseTex;
-    in vec2 v_texcoord;
-    out vec4 f_color;
-    void main()
-    {
-        f_color = texture(s_diffuseTex, vec2(v_texcoord.x, 1 - v_texcoord.y));
-    }
-)";
 
 #endif // end common_utils_hpp

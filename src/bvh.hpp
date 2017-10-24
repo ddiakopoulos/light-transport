@@ -4,10 +4,11 @@
 #pragma once
 
 #include "objects.hpp"
-#include "geometric.hpp"
 #include <vector>
 #include <memory>
 
+// This implementation only accounts for axis-aligned bounding boxes of mesh objects, mostly as a learning exercise. It will
+// later move to Embree's native BVH accelerator which correctly buckets individual triangles across all meshes in the scene. 
 class BVH
 {
 	struct ObjectComparator
