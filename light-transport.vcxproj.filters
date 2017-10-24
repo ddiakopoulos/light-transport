@@ -1,34 +1,60 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Source Files">
-      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
-    </Filter>
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="util.hpp">
-      <Filter>Source Files</Filter>
-    </ClInclude>
-    <ClInclude Include="bsdf.hpp">
-      <Filter>Source Files</Filter>
-    </ClInclude>
-    <ClInclude Include="bvh.hpp">
-      <Filter>Source Files</Filter>
-    </ClInclude>
-    <ClInclude Include="lights.hpp">
-      <Filter>Source Files</Filter>
-    </ClInclude>
-    <ClInclude Include="objects.hpp">
-      <Filter>Source Files</Filter>
-    </ClInclude>
-    <ClInclude Include="sampling.hpp">
-      <Filter>Source Files</Filter>
-    </ClInclude>
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="main.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\common\gl-imgui.cpp">
+      <Filter>common\gui</Filter>
     </ClCompile>
+    <ClCompile Include="..\third_party\imgui\imgui.cpp">
+      <Filter>common\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\third_party\imgui\imgui_draw.cpp">
+      <Filter>common\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\main.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\common\gl-imgui.hpp">
+      <Filter>common\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\third_party\imgui\imgui.h">
+      <Filter>common\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\third_party\imgui\imgui_internal.h">
+      <Filter>common\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\sampling.hpp">
+      <Filter>source\include</Filter>
+    </ClInclude>
+    <ClInclude Include="src\util.hpp">
+      <Filter>source\include</Filter>
+    </ClInclude>
+    <ClInclude Include="src\objects.hpp">
+      <Filter>source\include</Filter>
+    </ClInclude>
+    <ClInclude Include="src\lights.hpp">
+      <Filter>source\include</Filter>
+    </ClInclude>
+    <ClInclude Include="src\bvh.hpp">
+      <Filter>source\include</Filter>
+    </ClInclude>
+    <ClInclude Include="src\bsdf.hpp">
+      <Filter>source\include</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="common">
+      <UniqueIdentifier>{969f1686-8879-4f39-af4f-1eed311431c4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="common\gui">
+      <UniqueIdentifier>{5ca1568e-8b09-4542-a859-52ea8d4161ee}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="source">
+      <UniqueIdentifier>{d7fc98b2-53e2-4daa-bb72-cb5a5c05e8bb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="source\include">
+      <UniqueIdentifier>{94d82020-9f6d-4729-bd6a-79dbe1571c58}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
 </Project>

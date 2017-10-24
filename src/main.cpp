@@ -1,16 +1,14 @@
-#include "index.hpp"
-#include "light-transport/bvh.hpp"
-#include "light-transport/sampling.hpp"
-#include "light-transport/bsdf.hpp"
-#include "light-transport/lights.hpp"
-#include "light-transport/objects.hpp"
-#include "light-transport/util.hpp"
+#include "util.hpp"
+
+#include "bvh.hpp"
+#include "sampling.hpp"
+#include "bsdf.hpp"
+#include "lights.hpp"
+#include "objects.hpp"
+#include "util.hpp"
 #include "gl-api.hpp"
-#include "../util.hpp"
 
 #include <atomic>
-
-using namespace avl;
 
 // Reference
 // http://graphics.pixar.com/library/HQRenderingCourse/paper.pdf

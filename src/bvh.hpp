@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "light-transport/objects.hpp"
+#include "objects.hpp"
 #include "geometric.hpp"
 #include <vector>
 #include <memory>

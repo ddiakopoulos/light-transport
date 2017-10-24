@@ -13,6 +13,8 @@
 #define GLFW_INCLUDE_GLU
 #include "GLFW\glfw3.h"
 
+#include <iostream>
+#include <sstream>
 #include <map>
 #include <string>
 #include <vector>
