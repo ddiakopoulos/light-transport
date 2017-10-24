@@ -1,14 +1,24 @@
-#include "util.hpp"
+#include <atomic>
+#include <mutex>
+#include <condition_variable>
 
+#include "util.hpp"
 #include "bvh.hpp"
 #include "sampling.hpp"
 #include "bsdf.hpp"
 #include "lights.hpp"
 #include "objects.hpp"
-#include "util.hpp"
+#include "math-util.hpp"
 #include "gl-api.hpp"
+#include "gl-imgui.hpp"
 
-#include <atomic>
+using namespace gui;
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb/stb_image.h"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb/stb_image_write.h"
 
 // Reference
 // http://graphics.pixar.com/library/HQRenderingCourse/paper.pdf
@@ -52,10 +62,24 @@
 // [ ] Other render targets: depth buffer, normal buffer
 // [ ] Embree acceleration
 
-static bool g_debug = false;
+bool take_screenshot(int2 size)
+{
+    HumanTime t;
+    std::string timestamp =
+        std::to_string(t.month + 1) + "." +
+        std::to_string(t.monthDay) + "." +
+        std::to_string(t.year) + "-" +
+        std::to_string(t.hour) + "." +
+        std::to_string(t.minute) + "." +
+        std::to_string(t.second);
 
-UniformRandomGenerator gen;
-static bool takeScreenshot = true;
+    std::vector<uint8_t> screenShot(size.x * size.y * 3);
+    glReadPixels(0, 0, size.x, size.y, GL_RGB, GL_UNSIGNED_BYTE, screenShot.data());
+    auto flipped = screenShot;
+    for (int y = 0; y<size.y; ++y) memcpy(flipped.data() + y*size.x * 3, screenShot.data() + (size.y - y - 1)*size.x * 3, size.x * 3);
+    stbi_write_png(std::string("render_" + timestamp + ".png").c_str(), size.x, size.y, 3, flipped.data(), 3 * size.x);
+    return false;
+}
 
 ///////////////
 //   Scene   //
@@ -116,7 +140,7 @@ struct Scene
 
 		// Russian roulette termination
 		const float p = gen.random_float_safe(); // In the range [0.001f, 0.999f)
-		float shouldContinue = min(luminance(weight), 1.f);
+		float shouldContinue = std::min(luminance(weight), 1.f);
 		if (p > shouldContinue) return float3(0.f, 0.f, 0.f);
 		else weight /= shouldContinue;
 
@@ -189,7 +213,7 @@ struct Scene
 
 		if (scatter.pdf <= 0.f || brdfSample == float3(0, 0, 0)) return float3(0, 0, 0);
 
-		const float NdotL = avl::clamp(float(std::abs(dot(sampleDirection, scatter.info->N))), 0.f, 1.f);
+		const float NdotL = clamp(float(std::abs(dot(sampleDirection, scatter.info->N))), 0.f, 1.f);
 
 		// Weight, aka throughput
 		weight *= (brdfSample * NdotL) / scatter.pdf;
@@ -278,42 +302,49 @@ struct Film
 
 };
 
-#define WIDTH int(640)
-#define HEIGHT int(480)
-
 //////////////////////////
 //   Main Application   //
 //////////////////////////
 
+#define WIDTH int(640)
+#define HEIGHT int(480)
+
+struct FrameInputState
+{
+    float2 lastCursor;
+    bool ml = 0, mr = 0, bf = 0, bl = 0, bb = 0, br = 0;
+};
+
+static bool g_debug = false;
+static bool takeScreenshot = true;
+UniformRandomGenerator gen;
+FrameInputState inputState;
+
+std::unique_ptr<Window> win;
+std::unique_ptr<GlShader> flatShader;
+std::unique_ptr<ImGuiManager> imgui;
+
+simple_camera cam = {};
+int samplesPerPixel = 32;
+float fieldOfView = 90;
+
+std::shared_ptr<Film> film;
+Scene scene;
+SimpleTimer sceneTimer;
+std::vector<int2> coordinates;
+Pose lookAt; // camera.look_at({ 0, +1.25, 4.5 }, { 0, 0, 0 });
+std::mutex coordinateLock;
+std::vector<std::thread> renderWorkers;
+std::atomic<bool> earlyExit = { false };
+std::map<std::thread::id, manual_timer> renderTimers;
+std::mutex rLock;
+std::condition_variable renderCv;
+std::map<std::thread::id, std::atomic<bool>> threadTaskState;
+std::atomic<int> numIdleThreads;
+const int numWorkers = std::thread::hardware_concurrency();
+
 struct LightTransportApp : public GLFWApp
 {
-	std::unique_ptr<gui::ImGuiManager> igm;
-
-	std::shared_ptr<GlTexture2D> renderSurface;
-	std::shared_ptr<GLTextureView> renderView;
-
-	std::shared_ptr<Film> film;
-	Scene scene;
-	SimpleTimer sceneTimer;
-
-	GlCamera camera;
-	FlyCameraController cameraController;
-	std::vector<int2> coordinates;
-	Pose lookAt;
-
-	int samplesPerPixel = 32;
-	float fieldOfView = 90;
-
-	std::mutex coordinateLock;
-	std::vector<std::thread> renderWorkers;
-	std::atomic<bool> earlyExit = { false };
-	std::map<std::thread::id, avl::manual_timer> renderTimers;
-
-	std::mutex rLock;
-	std::condition_variable renderCv;
-	std::map<std::thread::id, std::atomic<bool>> threadTaskState;
-	std::atomic<int> numIdleThreads;
-	const int numWorkers = std::thread::hardware_concurrency();
 
 	LightTransportApp() : GLFWApp(WIDTH * 2, HEIGHT, "Light Transport App")
 	{
@@ -325,17 +356,7 @@ struct LightTransportApp : public GLFWApp
 		glfwGetWindowSize(window, &width, &height);
 		glViewport(0, 0, width, height);
 
-		igm.reset(new gui::ImGuiManager(window));
-		gui::make_dark_theme();
-
-		// Setup GL camera
-		cameraController.set_camera(&camera);
-		cameraController.enableSpring = false;
-		cameraController.movementSpeed = 0.01f;
-        camera.look_at({ 0, +1.25, 4.5 }, { 0, 0, 0 });
-
 		film = std::make_shared<Film>(int2(WIDTH, HEIGHT), camera.get_pose());
-
 		scene.ambient = float3(.0f);
 		scene.environment = float3(0.f);
 
@@ -584,11 +605,6 @@ struct LightTransportApp : public GLFWApp
 		return group;
 	}
 
-	void on_window_resize(int2 size) override
-	{
-
-	}
-
 	void on_input(const InputEvent & event) override
 	{
 		if (igm) igm->update_input(event);
@@ -606,25 +622,6 @@ struct LightTransportApp : public GLFWApp
 			std::cout << "Debug Trace: " << sample << std::endl;
 			g_debug = false;
 		}
-	}
-
-	bool take_screenshot(int2 size)
-	{
-		HumanTime t;
-		std::string timestamp =
-			std::to_string(t.month + 1) + "." +
-			std::to_string(t.monthDay) + "." +
-			std::to_string(t.year) + "-" +
-			std::to_string(t.hour) + "." +
-			std::to_string(t.minute) + "." +
-			std::to_string(t.second);
-
-		std::vector<uint8_t> screenShot(size.x * size.y * 3);
-		glReadPixels(0, 0, size.x, size.y, GL_RGB, GL_UNSIGNED_BYTE, screenShot.data());
-		auto flipped = screenShot;
-		for (int y = 0; y<size.y; ++y) memcpy(flipped.data() + y*size.x * 3, screenShot.data() + (size.y - y - 1)*size.x * 3, size.x * 3);
-		stbi_write_png(std::string("render_" + timestamp + ".png").c_str(), size.x, size.y, 3, flipped.data(), 3 * size.x);
-		return false;
 	}
 
 	void on_update(const UpdateEvent & e) override
@@ -701,9 +698,111 @@ struct LightTransportApp : public GLFWApp
 
 };
 
-IMPLEMENT_MAIN(int argc, char * argv[])
+int main(int argc, char * argv[])
 {
-	LightTransportApp app;
-	app.main_loop();
-	return 0;
+    cam.yfov = 1.0f;
+    cam.near_clip = 0.01f;
+    cam.far_clip = 32.0f;
+    cam.position = { 0, 1.5f,4 };
+
+    try
+    {
+        win.reset(new Window(640, 480, "Adobe Ground-Truth Dataset Generator"));
+    }
+    catch (const std::exception & e)
+    {
+        std::cout << "Caught GLFW window exception: " << e.what() << std::endl;
+    }
+
+    // Create imgui context
+    imgui.reset(new ImGuiManager(win->get_glfw_window_handle()));
+    gui::make_dark_theme();
+
+    int2 windowSize = win->get_window_size();
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+    while (!win->should_close())
+    {
+        glfwMakeContextCurrent(win->get_glfw_window_handle());
+
+        glfwPollEvents();
+
+        auto t1 = std::chrono::high_resolution_clock::now();
+        float timestep = std::chrono::duration<float>(t1 - t0).count();
+        t0 = t1;
+
+        if (inputState.mr)
+        {
+            const linalg::aliases::float4 orientation = cam.get_orientation();
+            linalg::aliases::float3 move;
+            if (inputState.bf) move -= qzdir(orientation);
+            if (inputState.bl) move -= qxdir(orientation);
+            if (inputState.bb) move += qzdir(orientation);
+            if (inputState.br) move += qxdir(orientation);
+            if (length2(move) > 0) cam.position += normalize(move) * (timestep * 10);
+        }
+
+        imgui->begin_frame();
+
+        glEnable(GL_DEPTH_TEST);
+
+        {
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, cameraFramebuffer);
+            glViewport(0, 0, renderSize.x, renderSize.y);
+            glClearColor(1.f, 0.f, 1.f, 1.f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        }
+
+        // Render to the GLFW window
+        std::vector<screen_viewport> viewports;
+
+        Bounds2D rect{ { 0.f, 0.f },{ (float)windowSize.x,(float)windowSize.y } };
+
+        const float mid = (rect.min().x + rect.max().x) / 2.f;
+        screen_viewport leftviewport = { rect.min(),{ mid - 2.f, rect.max().y }, cameraRGBTexture };
+
+        viewports.clear();
+        viewports.push_back(leftviewport);
+        //viewports.push_back(rightViewport);
+
+        if (viewports.size())
+        {
+            glUseProgram(0);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        }
+
+        for (auto & v : viewports)
+        {
+            glViewport(v.bmin.x, windowSize.y - v.bmax.y, v.bmax.x - v.bmin.x, v.bmax.y - v.bmin.y);
+            glActiveTexture(GL_TEXTURE0);
+            glEnable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, v.texture);
+            glBegin(GL_QUADS);
+            glTexCoord2f(0, 0); glVertex2f(-1, -1);
+            glTexCoord2f(1, 0); glVertex2f(+1, -1);
+            glTexCoord2f(1, 1); glVertex2f(+1, +1);
+            glTexCoord2f(0, 1); glVertex2f(-1, +1);
+            glEnd();
+            glDisable(GL_TEXTURE_2D);
+        }
+
+        if (should_take_screenshot)
+        {
+            std::cout << "Taking screenshot!" << std::endl;
+            should_take_screenshot = take_screenshot<3>(windowSize); // capture rgb buffer
+        }
+
+        gui::imgui_fixed_window_begin("Dataset Debug Tools", { { 0, windowSize.y - 128 },{ windowSize.x, windowSize.y } });
+        ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+        gui::imgui_fixed_window_end();
+
+        gl_check_error(__FILE__, __LINE__);
+
+        imgui->end_frame();
+
+        frameCount++;
+        win->swap_buffers();
+    }
+
 }

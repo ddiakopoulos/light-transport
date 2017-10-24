@@ -66,6 +66,79 @@ public:
     }
 };
 
+class SimpleTimer
+{
+    typedef std::chrono::high_resolution_clock::time_point timepoint;
+    typedef std::chrono::high_resolution_clock::duration timeduration;
+
+    bool isRunning;
+    timepoint startTime;
+    timepoint pauseTime;
+
+    inline timepoint current_time_point() const { return std::chrono::high_resolution_clock::now(); }
+    inline timeduration running_time() const { return (isRunning) ? current_time_point() - startTime : pauseTime - startTime; }
+
+    template<typename unit>
+    inline unit running_time() const
+    {
+        return std::chrono::duration_cast<unit>(running_time());
+    }
+
+public:
+
+    SimpleTimer(bool run = false) : isRunning(run)
+    {
+        if (run) start();
+    }
+
+    void start()
+    {
+        reset();
+        isRunning = true;
+    }
+
+    void stop()
+    {
+        reset();
+        isRunning = false;
+    }
+
+    void reset()
+    {
+        startTime = std::chrono::high_resolution_clock::now();
+        pauseTime = startTime;
+    }
+
+    void pause()
+    {
+        pauseTime = current_time_point();
+        isRunning = false;
+    }
+
+    void unpause()
+    {
+        if (isRunning) return;
+        startTime += current_time_point() - pauseTime;
+        isRunning = true;
+    }
+
+    std::chrono::nanoseconds nanoseconds() const { return running_time<std::chrono::nanoseconds>(); }
+    std::chrono::microseconds microseconds() const { return running_time<std::chrono::microseconds>(); }
+    std::chrono::milliseconds milliseconds() const { return running_time<std::chrono::milliseconds>(); }
+    std::chrono::seconds seconds() const { return running_time<std::chrono::seconds>(); }
+    bool is_running() { return isRunning; }
+};
+
+class manual_timer
+{
+    std::chrono::high_resolution_clock::time_point t0;
+    double timestamp{ 0.f };
+public:
+    void start() { t0 = std::chrono::high_resolution_clock::now(); }
+    void stop() { timestamp = std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - t0).count() * 1000; }
+    const double & get() { return timestamp; }
+};
+
 class Noncopyable
 {
 protected:
