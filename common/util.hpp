@@ -14,11 +14,13 @@
 #include <sstream>
 #include <memory>
 #include <random>
+#include <ctime>
 
 #include "linalg_util.hpp"
 #include "stb/stb_image.h"
 #include "stb/stb_image_write.h"
 #include "gl-api.hpp"
+#include "geometric.hpp"
 
 #define PI            3.1415926535897931
 #define HALF_PI       1.5707963267948966
@@ -139,6 +141,55 @@ public:
     const double & get() { return timestamp; }
 };
 
+struct HumanTime
+{
+
+    typedef std::chrono::duration<int, std::ratio_multiply<std::chrono::hours::period, std::ratio<24> >::type> days;
+
+    int year;
+    int month;
+    int yearDay;
+    int monthDay;
+    int weekDay;
+    int hour;
+    int minute;
+    int second;
+    int isDST;
+
+    HumanTime()
+    {
+        update();
+    }
+
+    void update()
+    {
+        std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+        std::time_t tt = std::chrono::system_clock::to_time_t(now);
+        tm local_tm = *localtime(&tt);
+        year = local_tm.tm_year + 1900;
+        month = local_tm.tm_mon + 1;
+        monthDay = local_tm.tm_mday;
+        yearDay = local_tm.tm_yday;
+        weekDay = local_tm.tm_wday;
+        hour = local_tm.tm_hour;
+        minute = local_tm.tm_min;
+        second = local_tm.tm_sec;
+        isDST = local_tm.tm_isdst;
+    }
+
+    std::string make_timestamp()
+    {
+        std::string timestamp =
+            std::to_string(month) + "." +
+            std::to_string(monthDay) + "." +
+            std::to_string(year) + "-" +
+            std::to_string(hour) + "." +
+            std::to_string(minute) + "." +
+            std::to_string(second);
+        return timestamp;
+    }
+};
+
 class Noncopyable
 {
 protected:
@@ -191,6 +242,7 @@ struct simple_camera
     float yfov, near_clip, far_clip;
     float3 position;
     float pitch, yaw;
+    Pose get_pose() const { return{ get_orientation(), position }; }
     float4 get_orientation() const { return qmul(rotation_quat(float3(0, 1, 0), yaw), rotation_quat(float3(1, 0, 0), pitch)); }
     float4x4 get_view_matrix() const { return mul(rotation_matrix(qconj(get_orientation())), translation_matrix(-position)); }
     float4x4 get_projection_matrix(const float aspectRatio) const { return linalg::perspective_matrix(yfov, aspectRatio, near_clip, far_clip); }

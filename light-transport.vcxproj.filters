@@ -1,33 +1,21 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClCompile Include="..\common\gl-imgui.cpp">
-      <Filter>common\gui</Filter>
-    </ClCompile>
-    <ClCompile Include="..\third_party\imgui\imgui.cpp">
-      <Filter>common\gui</Filter>
-    </ClCompile>
-    <ClCompile Include="..\third_party\imgui\imgui_draw.cpp">
-      <Filter>common\gui</Filter>
-    </ClCompile>
     <ClCompile Include="src\main.cpp">
       <Filter>source</Filter>
     </ClCompile>
+    <ClCompile Include="common\gl-imgui.cpp">
+      <Filter>common\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui.cpp">
+      <Filter>common\gui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_draw.cpp">
+      <Filter>common\gui</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\common\gl-imgui.hpp">
-      <Filter>common\gui</Filter>
-    </ClInclude>
-    <ClInclude Include="..\third_party\imgui\imgui.h">
-      <Filter>common\gui</Filter>
-    </ClInclude>
-    <ClInclude Include="..\third_party\imgui\imgui_internal.h">
-      <Filter>common\gui</Filter>
-    </ClInclude>
     <ClInclude Include="src\sampling.hpp">
-      <Filter>source\include</Filter>
-    </ClInclude>
-    <ClInclude Include="src\util.hpp">
       <Filter>source\include</Filter>
     </ClInclude>
     <ClInclude Include="src\objects.hpp">
@@ -41,6 +29,36 @@
     </ClInclude>
     <ClInclude Include="src\bsdf.hpp">
       <Filter>source\include</Filter>
+    </ClInclude>
+    <ClInclude Include="src\math-util.hpp">
+      <Filter>source\include</Filter>
+    </ClInclude>
+    <ClInclude Include="src\geometric.hpp">
+      <Filter>source\include</Filter>
+    </ClInclude>
+    <ClInclude Include="common\util.hpp">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="common\gl-api.hpp">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="common\linalg.h">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="common\linalg_util.hpp">
+      <Filter>common</Filter>
+    </ClInclude>
+    <ClInclude Include="common\gl-imgui.hpp">
+      <Filter>common\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imconfig.h">
+      <Filter>common\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui.h">
+      <Filter>common\gui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui_internal.h">
+      <Filter>common\gui</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

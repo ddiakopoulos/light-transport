@@ -1,6 +1,7 @@
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
+#include <thread>
 
 #include "util.hpp"
 #include "bvh.hpp"
@@ -45,16 +46,16 @@ using namespace gui;
 // [X] Ray Antialiasing (tent filtering)
 // [X] Timers for various functions (accel vs non-accel)
 // [X] Proper radiance based materials (bdrf)
-// [X] BVH Accelerator ([ ] Cleanup)
+// [X] BVH Accelerator
 // [X] Fix Intersection / Occlusion Bug
 // [X] Lambertian Material / Diffuse + Specular + Transmission Terms
 // [X] Mirror + Glass Materials
-// [ ] Area Lights!
+// [\] Area Lights
 // [ ] Cook-Torrance Microfacet BSDF implementation
 // [ ] Sampling Scheme(s): tiled, lines, random, etc
 // [ ] Cornell scene loader, texture mapping & normals
 // [ ] Alternate camera models: pinhole, fisheye, spherical
-// [ ] Add other primatives (box, plane, disc)
+// [ ] Add other primitives (box, plane, disc)
 // [ ] Skybox Sampling
 // [ ] Realtime GL preview
 // [ ] Portals (hehe)
@@ -62,22 +63,25 @@ using namespace gui;
 // [ ] Other render targets: depth buffer, normal buffer
 // [ ] Embree acceleration
 
-bool take_screenshot(int2 size)
+template<class T> 
+inline void flip_vertical_inplace(std::vector<T> & image, int2 size)
+{
+    for (int y = 0; y < size.y / 2; y++)
+    {
+        for (int x = 0; x < size.x; x++)
+        {
+            std::swap(image[y*size.x + x], image[(size.y - 1 - y)*size.x + x]);
+        }
+    }
+}
+
+inline bool take_screenshot(int2 size)
 {
     HumanTime t;
-    std::string timestamp =
-        std::to_string(t.month + 1) + "." +
-        std::to_string(t.monthDay) + "." +
-        std::to_string(t.year) + "-" +
-        std::to_string(t.hour) + "." +
-        std::to_string(t.minute) + "." +
-        std::to_string(t.second);
-
     std::vector<uint8_t> screenShot(size.x * size.y * 3);
     glReadPixels(0, 0, size.x, size.y, GL_RGB, GL_UNSIGNED_BYTE, screenShot.data());
-    auto flipped = screenShot;
-    for (int y = 0; y<size.y; ++y) memcpy(flipped.data() + y*size.x * 3, screenShot.data() + (size.y - y - 1)*size.x * 3, size.x * 3);
-    stbi_write_png(std::string("render_" + timestamp + ".png").c_str(), size.x, size.y, 3, flipped.data(), 3 * size.x);
+    for (int y = 0; y < size.y; ++y) std::memcpy(screenShot.data() + y * size.x * 3, screenShot.data() + (size.y - y - 1)*size.x * 3, size.x * 3);
+    stbi_write_png(std::string("render_" + t.make_timestamp() + ".png").c_str(), size.x, size.y, 3, screenShot.data(), 3 * size.x);
     return false;
 }
 
@@ -87,150 +91,150 @@ bool take_screenshot(int2 size)
 
 struct Scene
 {
-	float3 environment;
-	float3 ambient;
+    float3 environment;
+    float3 ambient;
 
-	std::vector<std::shared_ptr<Traceable>> objects;
-	std::vector<std::shared_ptr<Light>> lights;
+    std::vector<std::shared_ptr<Traceable>> objects;
+    std::vector<std::shared_ptr<Light>> lights;
 
-	std::unique_ptr<BVH> bvhAccelerator;
+    std::unique_ptr<BVH> bvhAccelerator;
 
-	void accelerate()
-	{
-		bvhAccelerator.reset(new BVH(objects));
-		bvhAccelerator->build();
-		bvhAccelerator->debug_traverse(bvhAccelerator->get_root());
-	}
+    void accelerate()
+    {
+        bvhAccelerator.reset(new BVH(objects));
+        bvhAccelerator->build();
+        bvhAccelerator->debug_traverse(bvhAccelerator->get_root());
+    }
 
-	const int maxRecursion = 5;
+    const int maxRecursion = 5;
 
-	RayIntersection scene_intersects(const Ray & ray)
-	{
-		RayIntersection isct;
-		if (bvhAccelerator)
-		{
-			isct = bvhAccelerator->intersect(ray);
-		}
-		else
-		{
-			for (auto & obj : objects)
-			{
-				const RayIntersection hit = obj->intersects(ray);
-				if (hit.d < isct.d) isct = hit;
-			}
-		}
-		return isct;
-	}
+    RayIntersection scene_intersects(const Ray & ray)
+    {
+        RayIntersection isct;
+        if (bvhAccelerator)
+        {
+            isct = bvhAccelerator->intersect(ray);
+        }
+        else
+        {
+            for (auto & obj : objects)
+            {
+                const RayIntersection hit = obj->intersects(ray);
+                if (hit.d < isct.d) isct = hit;
+            }
+        }
+        return isct;
+    }
 
-	// Returns the incoming radiance of `Ray` via unidirectional path tracing
-	float3 trace_ray(const Ray & ray, UniformRandomGenerator & gen, float3 weight, const int depth)
-	{
-		// Early exit with no radiance
-		if (depth >= maxRecursion || luminance(weight) <= 0.0f) return float3(0, 0, 0);
+    // Returns the incoming radiance of `Ray` via unidirectional path tracing
+    float3 trace_ray(const Ray & ray, UniformRandomGenerator & gen, float3 weight, const int depth)
+    {
+        // Early exit with no radiance
+        if (depth >= maxRecursion || luminance(weight) <= 0.0f) return float3(0, 0, 0);
 
-		RayIntersection intersection = scene_intersects(ray);
+        RayIntersection intersection = scene_intersects(ray);
 
-		// Assuming no intersection, early exit with the environment color
-		if (!intersection())
-		{
-			return environment;
-		}
+        // Assuming no intersection, early exit with the environment color
+        if (!intersection())
+        {
+            return environment;
+        }
 
-		BSDF * bsdf = intersection.m;
+        BSDF * bsdf = intersection.m;
 
-		// Russian roulette termination
-		const float p = gen.random_float_safe(); // In the range [0.001f, 0.999f)
-		float shouldContinue = std::min(luminance(weight), 1.f);
-		if (p > shouldContinue) return float3(0.f, 0.f, 0.f);
-		else weight /= shouldContinue;
+        // Russian roulette termination
+        const float p = gen.random_float_safe(); // In the range [0.001f, 0.999f)
+        float shouldContinue = std::min(luminance(weight), 1.f);
+        if (p > shouldContinue) return float3(0.f, 0.f, 0.f);
+        else weight /= shouldContinue;
 
-		float3 tangent;
-		float3 bitangent;
-		make_tangent_frame(normalize(intersection.normal), tangent, bitangent);
+        float3 tangent;
+        float3 bitangent;
+        make_tangent_frame(normalize(intersection.normal), tangent, bitangent);
 
-		IntersectionInfo * surfaceInfo = new IntersectionInfo();
-		surfaceInfo->Wo = -ray.direction;
-		surfaceInfo->P = ray.direction * intersection.d + ray.origin;
-		surfaceInfo->N = normalize(intersection.normal);
-		surfaceInfo->T = normalize(tangent);
-		surfaceInfo->BT = normalize(bitangent);
-		surfaceInfo->Kd = bsdf->Kd;
+        IntersectionInfo * surfaceInfo = new IntersectionInfo();
+        surfaceInfo->Wo = -ray.direction;
+        surfaceInfo->P = ray.direction * intersection.d + ray.origin;
+        surfaceInfo->N = normalize(intersection.normal);
+        surfaceInfo->T = normalize(tangent);
+        surfaceInfo->BT = normalize(bitangent);
+        surfaceInfo->Kd = bsdf->Kd;
 
-		// Create a new BSDF event with the relevant intersection data
-		SurfaceScatterEvent scatter(surfaceInfo);
+        // Create a new BSDF event with the relevant intersection data
+        SurfaceScatterEvent scatter(surfaceInfo);
 
-		// Sample from direct light sources
-		float3 directLighting;
+        // Sample from direct light sources
+        float3 directLighting;
 
-		bool emissive = false;
-		if (dynamic_cast<Emissive*>(bsdf))
-		{
-			emissive = true;
-			directLighting += bsdf->Kd;
-		}
+        bool emissive = false;
+        if (dynamic_cast<Emissive*>(bsdf))
+        {
+            emissive = true;
+            directLighting += bsdf->Kd;
+        }
 
-		for (const auto light : lights)
-		{
-			float3 lightWi;
-			float lightPDF;
-			float3 lightSample = light->sample_direct(gen, surfaceInfo->P, lightWi, lightPDF);
+        for (const auto light : lights)
+        {
+            float3 lightWi;
+            float lightPDF;
+            float3 lightSample = light->sample_direct(gen, surfaceInfo->P, lightWi, lightPDF);
 
-			// Make a shadow ray to check for occlusion between surface and a direct light
-			RayIntersection occlusion = scene_intersects({ surfaceInfo->P, lightWi });
+            // Make a shadow ray to check for occlusion between surface and a direct light
+            RayIntersection occlusion = scene_intersects({ surfaceInfo->P, lightWi });
 
-			// If it's not occluded  we can see the light source
-			if (!occlusion())
-			{
-				// Sample from the BSDF
-				IntersectionInfo * lightInfo = new IntersectionInfo();
-				lightInfo->Wo = lightWi;
-				lightInfo->P = ray.direction * intersection.d + ray.origin;
-				lightInfo->N = intersection.normal;
+            // If it's not occluded  we can see the light source
+            if (!occlusion())
+            {
+                // Sample from the BSDF
+                IntersectionInfo * lightInfo = new IntersectionInfo();
+                lightInfo->Wo = lightWi;
+                lightInfo->P = ray.direction * intersection.d + ray.origin;
+                lightInfo->N = intersection.normal;
 
-				SurfaceScatterEvent direct(lightInfo);
-				auto surfaceColor = bsdf->sample(gen, direct);
+                SurfaceScatterEvent direct(lightInfo);
+                auto surfaceColor = bsdf->sample(gen, direct);
 
-				if (direct.pdf <= 0.f || lightPDF <= 0.f) break;
+                if (direct.pdf <= 0.f || lightPDF <= 0.f) break;
 
-				// Integrate over the number of direct lighting samples
-				float3 Ld;
-				for (int i = 0; i < light->numSamples; ++i)
-				{
-					Ld += lightSample * surfaceColor;
-				}
+                // Integrate over the number of direct lighting samples
+                float3 Ld;
+                for (int i = 0; i < light->numSamples; ++i)
+                {
+                    Ld += lightSample * surfaceColor;
+                }
 
-				directLighting += (Ld / float3(light->numSamples)) / lightPDF;
+                directLighting += (Ld / float3(light->numSamples)) / lightPDF;
 
-				delete lightInfo;
-			}
-		}
+                delete lightInfo;
+            }
+        }
 
-		// Sample the diffuse brdf of the intersected material
-		float3 brdfSample = bsdf->sample(gen, scatter);
+        // Sample the diffuse brdf of the intersected material
+        float3 brdfSample = bsdf->sample(gen, scatter);
 
-		// To global
-		float3 sampleDirection = scatter.Wi;
+        // To global
+        float3 sampleDirection = scatter.Wi;
 
-		if (scatter.pdf <= 0.f || brdfSample == float3(0, 0, 0)) return float3(0, 0, 0);
+        if (scatter.pdf <= 0.f || brdfSample == float3(0, 0, 0)) return float3(0, 0, 0);
 
-		const float NdotL = clamp(float(std::abs(dot(sampleDirection, scatter.info->N))), 0.f, 1.f);
+        const float NdotL = clamp(float(std::abs(dot(sampleDirection, scatter.info->N))), 0.f, 1.f);
 
-		// Weight, aka throughput
-		weight *= (brdfSample * NdotL) / scatter.pdf;
+        // Weight, aka throughput
+        weight *= (brdfSample * NdotL) / scatter.pdf;
 
-		// Reflected illuminance
-		float3 refl;
-		if (length(sampleDirection) > 0.0f)
-		{
-			float3 originWithEpsilon = surfaceInfo->P + (float(0.0001f) * sampleDirection);
-			refl = trace_ray(Ray(originWithEpsilon, sampleDirection), gen, weight, depth + 1);
-		}
+        // Reflected illuminance
+        float3 refl;
+        if (length(sampleDirection) > 0.0f)
+        {
+            float3 originWithEpsilon = surfaceInfo->P + (float(0.0001f) * sampleDirection);
+            refl = trace_ray(Ray(originWithEpsilon, sampleDirection), gen, weight, depth + 1);
+        }
 
-		// Free the hit struct
-		delete surfaceInfo;
+        // Free the hit struct
+        delete surfaceInfo;
 
-		return clamp(weight * directLighting + refl, 0.f, 1.f);
-	}
+        return clamp(weight * directLighting + refl, 0.f, 1.f);
+    }
 };
 
 //////////////
@@ -239,68 +243,213 @@ struct Scene
 
 struct Film
 {
-	std::vector<float3> samples;
-	float2 size;
-	Pose view = {};
-	float FoV = std::tan(to_radians(90.f) * 0.5f);
+    std::vector<float3> samples;
+    float2 size;
+    Pose view = {};
+    float FoV = std::tan(to_radians(90.f) * 0.5f);
 
-	Film(const int2 & size, const Pose & view) : samples(size.x * size.y), size(size), view(view) { }
+    Film(const int2 & size, const Pose & view) : samples(size.x * size.y), size(size), view(view) { }
 
-	void set_field_of_view(float degrees) { FoV = std::tan(to_radians(degrees) * 0.5f); }
+    void set_field_of_view(float degrees) { FoV = std::tan(to_radians(degrees) * 0.5f); }
 
-	void reset(const Pose newView)
-	{
-		view = newView;
-		std::fill(samples.begin(), samples.end(), float3(0, 0, 0));
-	}
+    void reset(const Pose newView)
+    {
+        view = newView;
+        std::fill(samples.begin(), samples.end(), float3(0, 0, 0));
+    }
 
-	Ray make_ray_for_coordinate(const int2 & coord, UniformRandomGenerator & gen) const
-	{
-		const float aspectRatio = size.x / size.y;
+    Ray make_ray_for_coordinate(const int2 & coord, UniformRandomGenerator & gen) const
+    {
+        const float aspectRatio = size.x / size.y;
 
-		// Jitter the sampling direction and apply a tent filter for anti-aliasing
-		const float r1 = 2.0f * gen.random_float();
-		const float dx = (r1 < 1.0f) ? (std::sqrt(r1) - 1.0f) : (1.0f - std::sqrt(2.0f - r1));
-		const float r2 = 2.0f * gen.random_float();
-		const float dy = (r2 < 1.0f) ? (std::sqrt(r2) - 1.0f) : (1.0f - std::sqrt(2.0f - r2));
+        // Jitter the sampling direction and apply a tent filter for anti-aliasing
+        const float r1 = 2.0f * gen.random_float();
+        const float dx = (r1 < 1.0f) ? (std::sqrt(r1) - 1.0f) : (1.0f - std::sqrt(2.0f - r1));
+        const float r2 = 2.0f * gen.random_float();
+        const float dy = (r2 < 1.0f) ? (std::sqrt(r2) - 1.0f) : (1.0f - std::sqrt(2.0f - r2));
 
-		const float xNorm = ((size.x * 0.5f - float(coord.x) + dx) / size.x * aspectRatio) * FoV;
-		const float yNorm = ((size.y * 0.5f - float(coord.y) + dy) / size.y) * FoV;
-		const float3 vNorm = float3(xNorm, yNorm, 1.0f);
+        const float xNorm = ((size.x * 0.5f - float(coord.x) + dx) / size.x * aspectRatio) * FoV;
+        const float yNorm = ((size.y * 0.5f - float(coord.y) + dy) / size.y) * FoV;
+        const float3 vNorm = float3(xNorm, yNorm, 1.0f);
 
-		return view * Ray(float3(0.f), -(vNorm));
-	}
+        return view * Ray(float3(0.f), -(vNorm));
+    }
 
-	// Records the result of a ray traced through the camera origin (view) for a given pixel coordinate
-	void trace_samples(Scene & scene, UniformRandomGenerator & gen, const int2 & coord, float numSamples)
-	{
-		// Integrating a cosine factor about a hemisphere yields Pi. 
-		// The probability density function (PDF) of a cosine-weighted hemi is 1.f / Pi,
-		// resulting in a final weight of 1.f / numSamples for Monte-Carlo integration.
-		const float invSamples = 1.f / numSamples;
+    // Records the result of a ray traced through the camera origin (view) for a given pixel coordinate
+    void trace_samples(Scene & scene, UniformRandomGenerator & gen, const int2 & coord, float numSamples)
+    {
+        // Integrating a cosine factor about a hemisphere yields Pi. 
+        // The probability density function (PDF) of a cosine-weighted hemi is 1.f / Pi,
+        // resulting in a final weight of 1.f / numSamples for Monte-Carlo integration.
+        const float invSamples = 1.f / numSamples;
 
-		float3 radiance;
-		for (int s = 0; s < numSamples; ++s)
-		{
-			radiance = radiance + scene.trace_ray(make_ray_for_coordinate(coord, gen), gen, float3(1.f), 0);
-		}
+        float3 radiance;
+        for (int s = 0; s < numSamples; ++s)
+        {
+            radiance = radiance + scene.trace_ray(make_ray_for_coordinate(coord, gen), gen, float3(1.f), 0);
+        }
 
-		samples[coord.y * size.x + coord.x] = radiance * invSamples;
-	}
+        samples[coord.y * size.x + coord.x] = radiance * invSamples;
+    }
 
-	float3 debug_trace(Scene & scene, UniformRandomGenerator & gen, const int2 & coord, float numSamples)
-	{
-		const float invSamples = 1.f / numSamples;
+    float3 debug_trace(Scene & scene, UniformRandomGenerator & gen, const int2 & coord, float numSamples)
+    {
+        const float invSamples = 1.f / numSamples;
 
-		float3 radiance;
-		for (int s = 0; s < numSamples; ++s)
-		{
-			radiance = radiance + scene.trace_ray(make_ray_for_coordinate(coord, gen), gen, float3(1.f), 0);
-		}
-		return radiance *= invSamples;
-	}
+        float3 radiance;
+        for (int s = 0; s < numSamples; ++s)
+        {
+            radiance = radiance + scene.trace_ray(make_ray_for_coordinate(coord, gen), gen, float3(1.f), 0);
+        }
+        return radiance *= invSamples;
+    }
 
 };
+
+struct RendererState
+{
+    UniformRandomGenerator gen;
+    Scene scene;
+    std::vector<int2> coordinates;
+    int samplesPerPixel = 32;
+    simple_camera camera = {};
+    std::shared_ptr<Film> film;
+};
+
+// This is essentially a quickly implemented, non-generic threadpool. 
+struct ThreadedRenderCoordinator
+{
+    std::mutex coordinateLock;
+    std::atomic<bool> earlyExit = { false };
+
+    std::map<std::thread::id, manual_timer> renderTimers;
+    std::mutex rLock;
+    std::condition_variable renderCv;
+
+    std::vector<std::thread> renderWorkers;
+    std::map<std::thread::id, std::atomic<bool>> threadTaskState;
+    std::atomic<int> numIdleThreads;
+
+    const int numWorkers = std::thread::hardware_concurrency();
+
+    std::shared_ptr<RendererState> state;
+
+    ThreadedRenderCoordinator(std::shared_ptr<RendererState> s) : state(s)
+    {
+        numIdleThreads.store(0);
+
+        for (int i = 0; i < numWorkers; ++i)
+        {
+            renderWorkers.push_back(std::thread(&ThreadedRenderCoordinator::threaded_render, this, generate_bag_of_pixels()));
+        }
+    }
+
+    ~ThreadedRenderCoordinator()
+    {
+        earlyExit = true;
+        for (auto & ts : threadTaskState)
+        {
+            ts.second.store(true);
+        }
+
+        renderCv.notify_all(); // notify render threads to wake up
+
+        std::for_each(renderWorkers.begin(), renderWorkers.end(), [](std::thread & t)
+        {
+            if (t.joinable())
+            {
+                t.join();
+            }
+        });
+    }
+
+    void threaded_render(std::vector<int2> pixelCoords)
+    {
+        auto & timer = renderTimers[std::this_thread::get_id()];
+        threadTaskState[std::this_thread::get_id()].store(false);
+
+        while (earlyExit == false)
+        {
+            for (auto coord : pixelCoords)
+            {
+                timer.start();
+                state->film->trace_samples(state->scene, state->gen, coord, state->samplesPerPixel);
+                timer.stop();
+            }
+            pixelCoords = generate_bag_of_pixels();
+
+            if (pixelCoords.size() == 0)
+            {
+                std::unique_lock<std::mutex> l(rLock);
+                numIdleThreads++;
+                renderCv.wait(l, [this]() { return threadTaskState[std::this_thread::get_id()].load(); });
+                threadTaskState[std::this_thread::get_id()].store(false);
+                numIdleThreads--;
+            }
+        }
+    }
+
+    // Return a vector of 1024 randomly selected coordinates from the total that we need to render.
+    std::vector<int2> generate_bag_of_pixels()
+    {
+        std::lock_guard<std::mutex> guard(coordinateLock);
+        std::vector<int2> group;
+        for (int w = 0; w < 1024; w++)
+        {
+            if (state->coordinates.size())
+            {
+                auto randomIdx = state->gen.random_int((int)state->coordinates.size() - 1);
+                auto randomCoord = state->coordinates[randomIdx];
+                state->coordinates.erase(state->coordinates.begin() + randomIdx);
+                group.push_back(randomCoord);
+            }
+        }
+
+        return group;
+    }
+
+    void reset()
+    {
+        std::lock_guard<std::mutex> guard(coordinateLock);
+        state->coordinates.clear();
+        for (int y = 0; y < state->film->size.y; ++y)
+        {
+            for (int x = 0; x < state->film->size.x; ++x)
+            {
+                state->coordinates.push_back(int2(x, y));
+            }
+        }
+
+        state->film->reset(state->camera.get_pose());
+        // todo - take screenshot
+
+        {
+            rLock.lock();
+            for (auto & ts : threadTaskState)
+            {
+                ts.second.store(true);
+            }
+            renderCv.notify_all(); // notify all threads to wake up
+            rLock.unlock();
+        }
+    }
+
+    bool is_idle() const { return numIdleThreads == numWorkers; }
+};
+
+void draw_texture_buffer(float rx, float ry, float rw, float rh, const GLuint handle)
+{
+    glBindTexture(GL_TEXTURE_2D, handle);
+    glEnable(GL_TEXTURE_2D);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0); glVertex2f(rx, ry);
+    glTexCoord2f(1, 0); glVertex2f(rx + rw, ry);
+    glTexCoord2f(1, 1); glVertex2f(rx + rw, ry + rh);
+    glTexCoord2f(0, 1); glVertex2f(rx, ry + rh);
+    glEnd();
+    glDisable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
 
 //////////////////////////
 //   Main Application   //
@@ -317,409 +466,230 @@ struct FrameInputState
 
 static bool g_debug = false;
 static bool takeScreenshot = true;
-UniformRandomGenerator gen;
+
 FrameInputState inputState;
 
 std::unique_ptr<Window> win;
 std::unique_ptr<GlShader> flatShader;
 std::unique_ptr<ImGuiManager> imgui;
+GlTexture2D surface;
 
-simple_camera cam = {};
-int samplesPerPixel = 32;
 float fieldOfView = 90;
+size_t frameCount = 0;
 
-std::shared_ptr<Film> film;
-Scene scene;
+std::shared_ptr<ThreadedRenderCoordinator> coordinator;
+std::shared_ptr<RendererState> rendererState;
+
 SimpleTimer sceneTimer;
-std::vector<int2> coordinates;
-Pose lookAt; // camera.look_at({ 0, +1.25, 4.5 }, { 0, 0, 0 });
-std::mutex coordinateLock;
-std::vector<std::thread> renderWorkers;
-std::atomic<bool> earlyExit = { false };
-std::map<std::thread::id, manual_timer> renderTimers;
-std::mutex rLock;
-std::condition_variable renderCv;
-std::map<std::thread::id, std::atomic<bool>> threadTaskState;
-std::atomic<int> numIdleThreads;
-const int numWorkers = std::thread::hardware_concurrency();
-
-struct LightTransportApp : public GLFWApp
-{
-
-	LightTransportApp() : GLFWApp(WIDTH * 2, HEIGHT, "Light Transport App")
-	{
-		scoped_timer constructor("Application Constructor");
-
-		glfwSwapInterval(1);
-
-		int width, height;
-		glfwGetWindowSize(window, &width, &height);
-		glViewport(0, 0, width, height);
-
-		film = std::make_shared<Film>(int2(WIDTH, HEIGHT), camera.get_pose());
-		scene.ambient = float3(.0f);
-		scene.environment = float3(0.f);
-
-		std::shared_ptr<RaytracedQuad> q = std::make_shared<RaytracedQuad>();
-
-		std::shared_ptr<RaytracedSphere> a = std::make_shared<RaytracedSphere>();
-		std::shared_ptr<RaytracedSphere> b = std::make_shared<RaytracedSphere>();
-		std::shared_ptr<RaytracedSphere> c = std::make_shared<RaytracedSphere>();
-		std::shared_ptr<RaytracedSphere> d = std::make_shared<RaytracedSphere>();
-		std::shared_ptr<RaytracedSphere> glassSphere = std::make_shared<RaytracedSphere>();
-
-		std::shared_ptr<RaytracedBox> floor = std::make_shared<RaytracedBox>();
-		std::shared_ptr<RaytracedBox> leftWall = std::make_shared<RaytracedBox>();
-		std::shared_ptr<RaytracedBox> rightWall = std::make_shared<RaytracedBox>();
-		std::shared_ptr<RaytracedBox> backWall = std::make_shared<RaytracedBox>();
-
-		std::shared_ptr<RaytracedPlane> plane = std::make_shared<RaytracedPlane>();
-
-		std::shared_ptr<PointLight> pointLight = std::make_shared<PointLight>();
-		pointLight->lightPos = float3(0, 2, 0);
-		pointLight->intensity = float3(1, 1, 1);
-		scene.lights.push_back(pointLight);
-
-		q->q.reset(new Quad(float3(-0.5, 0, 0), float3(0, 1, 0), float3(1, 0, 0)));
-		q->m = std::make_shared<Emissive>();
-		q->m->Kd = float3(1, 0, 0);
-
-		std::shared_ptr<AreaLight> areaLight = std::make_shared<AreaLight>();
-		areaLight->intensity = float3(1, 1, 1);
-		areaLight->quad = q->q.get();
-		scene.lights.push_back(areaLight);
-
-		/*
-		std::shared_ptr<RaytracedBox> areaLightGeometry = std::make_shared<RaytracedBox>();
-		areaLightGeometry->m = std::make_shared<Emissive>();
-		areaLightGeometry->m->Kd = float3(1.0f, 1.0f, 1.0f);
-		//areaLightGeometry->_min = float3(-1.0, 3.5f, -1.0);
-		//areaLightGeometry->_max = float3(+1.0, +4.0f, +1.0);
-		areaLightGeometry->_min = float3(-2.55, 0.f, -2.66);
-		areaLightGeometry->_max = float3(-2.66, 2.66f, +2.66);
-		scene.objects.push_back(areaLightGeometry);
-		*/
-
-		/*
-		std::shared_ptr<PointLight> pointLight2 = std::make_shared<PointLight>();
-		pointLight2->lightPos = float3(0, 4, 0);
-		pointLight2->intensity = float3(1, 1, 0.5);
-		scene.lights.push_back(pointLight2);
-		*/
-
-		a->m = std::make_shared<IdealDiffuse>();
-		a->radius = 0.5f;
-		a->m->Kd = float3(1, 1, 1);
-		a->center = float3(-0.66f, 0.50f, 0);
-
-		a->m = std::make_shared<IdealDiffuse>();
-		a->radius = 0.5f;
-		//a->m->Kd = float3(45.f/255.f, 122.f / 255.f, 199.f / 255.f);
-		a->m->Kd = float3(1, 1, 1);
-		a->center = float3(-0.66f, 0.50f, 0);
-
-		b->m = std::make_shared<IdealDiffuse>();
-		b->radius = 0.5f;
-		//b->m->Kd = float3(70.f / 255.f, 57.f / 255.f, 192.f / 255.f);
-		b->m->Kd = float3(1, 1, 1);
-		b->center = float3(+0.66f, 0.50f, 0);
-
-		c->m = std::make_shared<IdealDiffuse>();
-		c->radius = 0.5f;
-		//c->m->Kd = float3(192.f / 255.f, 70.f / 255.f, 57.f / 255.f);
-		c->m->Kd = float3(1, 1, 1);
-		c->center = float3(-0.33f, 0.50f, +0.66f);
-
-		d->m = std::make_shared<IdealDiffuse>();
-		d->radius = 0.5f;
-		//d->m->Kd = float3(181.f / 255.f, 51.f / 255.f, 193.f / 255.f);
-		d->m->Kd = float3(1, 1, 1);
-		d->center = float3(+0.33f, 0.50f, 0.66f);
-
-		glassSphere->m = std::make_shared<DialectricBSDF>();
-		glassSphere->radius = 0.50f;
-		glassSphere->m->Kd = float3(1.f);
-		glassSphere->center = float3(1.5f, 0.5f, 1.25);
-
-		floor->m = std::make_shared<IdealSpecular>();
-		floor->m->Kd = float3(0.9, 0.9, 0.9);
-		floor->_min = float3(-2.66, -0.1, -2.66);
-		floor->_max = float3(+2.66, +0.0, +2.66);
-
-		leftWall->m = std::make_shared<IdealDiffuse>();
-		leftWall->m->Kd = float3(255.f / 255.f, 20.f / 255.f, 25.f / 255.f);
-		leftWall->_min = float3(-2.55, 0.f, -2.66);
-		leftWall->_max = float3(-2.66, 2.66f, +2.66);
-
-		rightWall->m = std::make_shared<IdealDiffuse>();
-		rightWall->m->Kd = float3(25.f / 255.f, 255.f / 255.f, 20.f / 255.f);
-		rightWall->_min = float3(+2.66, 0.f, -2.66);
-		rightWall->_max = float3(+2.55, 2.66f, +2.66);
-
-		backWall->m = std::make_shared<IdealDiffuse>();
-		backWall->m->Kd = float3(0.9, 0.9, 0.9);
-		backWall->_min = float3(-2.66, 0.0f, -2.66);
-		backWall->_max = float3(+2.66, +2.66f, -2.55);
-
-		plane->m = std::make_shared<IdealDiffuse>();
-		plane->m->Kd = float3(1, 1, 0.5);
-		plane->equation = float4(0, 1, 0, -0.0999f);
-		//scene.objects.push_back(plane);
-
-		scene.objects.push_back(floor);
-		scene.objects.push_back(leftWall);
-		scene.objects.push_back(rightWall);
-		scene.objects.push_back(backWall);
-
-		//scene.objects.push_back(a);
-		//scene.objects.push_back(b);
-		//scene.objects.push_back(c);
-		scene.objects.push_back(d);
-
-		scene.objects.push_back(glassSphere);
-
-		scene.objects.push_back(q);
-
-		/*
-		auto torusKnot = load_geometry_from_ply("assets/models/geometry/TorusKnotUniform.ply");
-		rescale_geometry(torusKnot, 1.f);
-		for (auto & v : torusKnot.vertices)
-		{
-			v = transform_coord(make_translation_matrix({ 0, 1.125, 2.75 }), v);
-			v *= 0.75f;
-		}
-		std::shared_ptr<RaytracedMesh> torusKnotTrimesh = std::make_shared<RaytracedMesh>(torusKnot);
-		torusKnotTrimesh->m = std::make_shared<DialectricBSDF>();
-		torusKnotTrimesh->m->Kd = float3(1, 1, 1);
-		scene.objects.push_back(torusKnotTrimesh);
-		*/
-
-		/*
-		auto shaderball = load_geometry_from_ply("assets/models/shaderball/shaderball_simplified.ply");
-		rescale_geometry(shaderball, 1.f);
-		for (auto & v : shaderball.vertices)
-		{
-			v = transform_coord(make_translation_matrix({ 0, 1.125, 1 }), v);
-			v *= 0.75f;
-		}
-		std::shared_ptr<RaytracedMesh> shaderballTrimesh = std::make_shared<RaytracedMesh>(shaderball);
-		shaderballTrimesh->m = std::make_shared<IdealDiffuse>();
-		shaderballTrimesh->m->Kd = float3(1, 1, 1);
-		scene.objects.push_back(shaderballTrimesh);
-		*/
-
-		// Traverse + build BVH accelerator for the objects we've added to the scene
-		{
-			scoped_timer bvh("BVH Generation");
-			//scene.accelerate();
-		}
-
-		// Generate a vector of all possible pixel locations to raytrace
-		for (int y = 0; y < film->size.y; ++y)
-		{
-			for (int x = 0; x < film->size.x; ++x)
-			{
-				coordinates.push_back(int2(x, y));
-			}
-		}
-
-		numIdleThreads.store(0);
-
-		for (int i = 0; i < numWorkers; ++i)
-		{
-			renderWorkers.push_back(std::thread(&LightTransportApp::threaded_render, this, generate_bag_of_pixels()));
-		}
-
-		// Create a GL texture to which we can render
-		renderSurface.reset(new GlTexture2D());
-		renderSurface->setup(WIDTH, HEIGHT, GL_RGB, GL_RGB, GL_FLOAT, nullptr);
-		renderView.reset(new GLTextureView(false));
-
-		sceneTimer.start();
-	}
-
-	void threaded_render(std::vector<int2> pixelCoords)
-	{
-		auto & timer = renderTimers[std::this_thread::get_id()];
-		threadTaskState[std::this_thread::get_id()].store(false);
-
-		while (earlyExit == false)
-		{
-			for (auto coord : pixelCoords)
-			{
-				timer.start();
-				film->trace_samples(scene, gen, coord, samplesPerPixel);
-				timer.stop();
-			}
-			pixelCoords = generate_bag_of_pixels();
-
-			if (pixelCoords.size() == 0)
-			{
-				std::unique_lock<std::mutex> l(rLock);
-				numIdleThreads++;
-				renderCv.wait(l, [this]() { return threadTaskState[std::this_thread::get_id()].load(); });
-				threadTaskState[std::this_thread::get_id()].store(false);
-				numIdleThreads--;
-			}
-		}
-	}
-
-	~LightTransportApp()
-	{
-		sceneTimer.stop();
-		earlyExit = true;
-		for (auto & ts : threadTaskState) ts.second.store(true);
-		renderCv.notify_all(); // notify them to wake up
-		std::for_each(renderWorkers.begin(), renderWorkers.end(), [](std::thread & t)
-		{
-			if (t.joinable()) t.join();
-		});
-	}
-
-	// Return a vector of 1024 randomly selected coordinates from the total that we need to render.
-	std::vector<int2> generate_bag_of_pixels()
-	{
-		std::lock_guard<std::mutex> guard(coordinateLock);
-		std::vector<int2> group;
-		for (int w = 0; w < 1024; w++)
-		{
-			if (coordinates.size())
-			{
-				auto randomIdx = gen.random_int((int)coordinates.size() - 1);
-				auto randomCoord = coordinates[randomIdx];
-				coordinates.erase(coordinates.begin() + randomIdx);
-				group.push_back(randomCoord);
-			}
-		}
-
-		/*
-		std::vector<int2> group;
-		for (int y = 0; y < HEIGHT; y++)
-		{
-			for (int x = 0; x < WIDTH; x++)
-			{
-				group.push_back(coordinates[y * WIDTH + x]);
-			}
-		}
-		*/
-		return group;
-	}
-
-	void on_input(const InputEvent & event) override
-	{
-		if (igm) igm->update_input(event);
-		cameraController.handle_input(event);
-
-		if (event.type == InputEvent::KEY &&  event.action == GLFW_RELEASE)
-		{
-			if (camera.get_pose() != film->view) reset_film();
-		}
-
-		if (event.type == InputEvent::MOUSE && event.action == GLFW_RELEASE)
-		{
-			g_debug = true;
-			auto sample = film->debug_trace(scene, gen, int2(event.cursor.x, HEIGHT - event.cursor.y), 1); // note 4 instead of samplesPerPixel
-			std::cout << "Debug Trace: " << sample << std::endl;
-			g_debug = false;
-		}
-	}
-
-	void on_update(const UpdateEvent & e) override
-	{
-		cameraController.update(e.timestep_ms);
-
-		// Have we finished rendering? 
-		if (numIdleThreads == numWorkers && takeScreenshot == true)
-		{
-			std::this_thread::sleep_for(std::chrono::milliseconds(25));
-			takeScreenshot = take_screenshot({ WIDTH, HEIGHT });
-			std::cout << "Render Saved..." << std::endl;
-		}
-	}
-
-	void reset_film()
-	{
-		std::lock_guard<std::mutex> guard(coordinateLock);
-		coordinates.clear();
-		for (int y = 0; y < film->size.y; ++y)
-		{
-			for (int x = 0; x < film->size.x; ++x)
-			{
-				coordinates.push_back(int2(x, y));
-			}
-		}
-		//camera.pose = lookAt;
-		film->reset(camera.get_pose());
-		takeScreenshot = true;
-
-		rLock.lock();
-		for (auto & ts : threadTaskState) ts.second.store(true);
-		renderCv.notify_all(); // notify them to wake up
-		rLock.unlock();
-	}
-
-	void on_draw() override
-	{
-		glfwMakeContextCurrent(window);
-
-		int width, height;
-		glfwGetWindowSize(window, &width, &height);
-		glViewport(0, 0, width, height);
-
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-		glClearColor(0.f, 0.f, 0.f, 1.0f);
-
-        glTextureImage2DEXT(renderSurface->id(), GL_TEXTURE_2D, 0, GL_RGB, WIDTH, HEIGHT, 0, GL_RGB, GL_FLOAT, film->samples.data());
-
-		Bounds2D renderArea = { 0.f, 0.f, (float)WIDTH, (float)HEIGHT };
-		renderView->draw(renderArea, float2(width, height), renderSurface->id());
-
-		if (igm) igm->begin_frame();
-		ImGui::Text("Application Runtime %.3lld seconds", sceneTimer.seconds().count());
-		ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-		ImGui::InputFloat3("Camera Position", &camera.get_pose().position[0]);
-		ImGui::InputFloat4("Camera Orientation", &camera.get_pose().orientation[0]);
-		if (ImGui::SliderFloat("Camera FoV", &fieldOfView, 45.f, 120.f))
-		{
-			reset_film();
-			film->set_field_of_view(fieldOfView);
-		}
-		if (ImGui::SliderInt("SPP", &samplesPerPixel, 1, 8192)) reset_film();
-		ImGui::ColorEdit3("Ambient", &scene.ambient[0]);
-		for (auto & t : renderTimers)
-		{
-			ImGui::Text("%#010x %.3f", t.first, t.second.get());
-		}
-		if (ImGui::Button("Save *.png")) take_screenshot({ WIDTH, HEIGHT });
-		if (igm) igm->end_frame();
-
-		glfwSwapBuffers(window);
-	}
-
-};
 
 int main(int argc, char * argv[])
 {
-    cam.yfov = 1.0f;
-    cam.near_clip = 0.01f;
-    cam.far_clip = 32.0f;
-    cam.position = { 0, 1.5f,4 };
-
+    // Setup Window
     try
     {
-        win.reset(new Window(640, 480, "Adobe Ground-Truth Dataset Generator"));
+        win.reset(new Window(WIDTH * 2, HEIGHT, "CPU Light Transport"));
     }
     catch (const std::exception & e)
     {
         std::cout << "Caught GLFW window exception: " << e.what() << std::endl;
     }
 
+    // Setup application callbacks
+    win->on_char = [&](int codepoint)
+    {
+        auto e = make_input_event(win->get_glfw_window_handle(), InputEvent::CHAR, win->get_cursor_pos(), 0);
+        e.value[0] = codepoint;
+        if (win->on_input) win->on_input(e);
+    };
+
+    win->on_key = [&](int key, int action, int mods)
+    {
+        auto e = make_input_event(win->get_glfw_window_handle(), InputEvent::KEY, win->get_cursor_pos(), action);
+        e.value[0] = key;
+        if (win->on_input) win->on_input(e);
+    };
+
+    win->on_mouse_button = [&](int button, int action, int mods)
+    {
+        auto e = make_input_event(win->get_glfw_window_handle(), InputEvent::MOUSE, win->get_cursor_pos(), action);
+        e.value[0] = button;
+        if (win->on_input) win->on_input(e);
+    };
+
+    win->on_cursor_pos = [&](linalg::aliases::float2 position)
+    {
+        auto e = make_input_event(win->get_glfw_window_handle(), InputEvent::CURSOR, position, 0);
+        if (win->on_input) win->on_input(e);
+    };
+
+    win->on_input = [&](const InputEvent & event)
+    {
+        imgui->update_input(event);
+
+        if (event.type == InputEvent::KEY)
+        {
+            if (event.value[0] == GLFW_KEY_W) inputState.bf = event.is_down();
+            if (event.value[0] == GLFW_KEY_A) inputState.bl = event.is_down();
+            if (event.value[0] == GLFW_KEY_S) inputState.bb = event.is_down();
+            if (event.value[0] == GLFW_KEY_D) inputState.br = event.is_down();
+            if (event.action == GLFW_RELEASE)
+            {
+                if (rendererState->camera.get_pose() != rendererState->film->view)
+                {
+                    coordinator->reset();
+                }
+            }
+        }
+        else if (event.type == InputEvent::MOUSE)
+        {
+            if (event.value[0] == GLFW_MOUSE_BUTTON_LEFT) inputState.ml = event.is_down();
+            if (event.value[0] == GLFW_MOUSE_BUTTON_RIGHT) inputState.mr = event.is_down();
+            if (event.action == GLFW_RELEASE)
+            {
+                g_debug = true;
+                auto sample = rendererState->film->debug_trace(rendererState->scene, rendererState->gen, int2(event.cursor.x, HEIGHT - event.cursor.y), 1); // note 4 instead of samplesPerPixel
+                std::cout << "Debug Trace: " << sample << std::endl;
+                g_debug = false;
+            }
+        }
+        else if (event.type == InputEvent::CURSOR)
+        {
+            auto deltaCursorMotion = event.cursor - inputState.lastCursor;
+            if (inputState.mr)
+            {
+                rendererState->camera.yaw -= deltaCursorMotion.x * 0.01f;
+                rendererState->camera.pitch -= deltaCursorMotion.y * 0.01f;
+            }
+            inputState.lastCursor = float2(event.cursor.x, event.cursor.y);
+        }
+    };
+
     // Create imgui context
     imgui.reset(new ImGuiManager(win->get_glfw_window_handle()));
     gui::make_dark_theme();
 
+    // Setup path tracer
+    rendererState.reset(new RendererState());
+
+    rendererState->camera.yfov = 1.0f;
+    rendererState->camera.near_clip = 0.01f;
+    rendererState->camera.far_clip = 32.0f;
+    rendererState->camera.position = { 0, +1.25f, 4.5f };
+
+    rendererState->film = std::make_shared<Film>(int2(WIDTH, HEIGHT), rendererState->camera.get_pose());
+    rendererState->scene.ambient = float3(0.0f);
+    rendererState->scene.environment = float3(0.0f);
+
+    std::shared_ptr<RaytracedQuad> q = std::make_shared<RaytracedQuad>();
+
+    std::shared_ptr<RaytracedSphere> a = std::make_shared<RaytracedSphere>();
+    std::shared_ptr<RaytracedSphere> b = std::make_shared<RaytracedSphere>();
+    std::shared_ptr<RaytracedSphere> c = std::make_shared<RaytracedSphere>();
+    std::shared_ptr<RaytracedSphere> d = std::make_shared<RaytracedSphere>();
+    std::shared_ptr<RaytracedSphere> glassSphere = std::make_shared<RaytracedSphere>();
+
+    std::shared_ptr<RaytracedBox> floor = std::make_shared<RaytracedBox>();
+    std::shared_ptr<RaytracedBox> leftWall = std::make_shared<RaytracedBox>();
+    std::shared_ptr<RaytracedBox> rightWall = std::make_shared<RaytracedBox>();
+    std::shared_ptr<RaytracedBox> backWall = std::make_shared<RaytracedBox>();
+
+    std::shared_ptr<PointLight> pointLight = std::make_shared<PointLight>();
+    pointLight->lightPos = float3(0, 2, 0);
+    pointLight->intensity = float3(1, 1, 1);
+    rendererState->scene.lights.push_back(pointLight);
+
+    {
+        a->m = std::make_shared<IdealDiffuse>();
+        a->radius = 0.5f;
+        a->m->Kd = float3(1, 1, 1);
+        a->center = float3(-0.66f, 0.50f, 0);
+
+        b->m = std::make_shared<IdealDiffuse>();
+        b->radius = 0.5f;
+        b->m->Kd = float3(1, 1, 1);
+        b->center = float3(+0.66f, 0.50f, 0);
+
+        c->m = std::make_shared<IdealDiffuse>();
+        c->radius = 0.5f;
+        c->m->Kd = float3(1, 1, 1);
+        c->center = float3(-0.33f, 0.50f, +0.66f);
+
+        d->m = std::make_shared<IdealDiffuse>();
+        d->radius = 0.5f;
+        d->m->Kd = float3(1, 1, 1);
+        d->center = float3(+0.33f, 0.50f, 0.66f);
+
+        glassSphere->m = std::make_shared<DialectricBSDF>();
+        glassSphere->radius = 0.50f;
+        glassSphere->m->Kd = float3(1.f);
+        glassSphere->center = float3(1.5f, 0.5f, 1.25);
+
+        floor->m = std::make_shared<IdealSpecular>();
+        floor->m->Kd = float3(0.9, 0.9, 0.9);
+        floor->_min = float3(-2.66, -0.1, -2.66);
+        floor->_max = float3(+2.66, +0.0, +2.66);
+
+        leftWall->m = std::make_shared<IdealDiffuse>();
+        leftWall->m->Kd = float3(255.f / 255.f, 20.f / 255.f, 25.f / 255.f);
+        leftWall->_min = float3(-2.55, 0.f, -2.66);
+        leftWall->_max = float3(-2.66, 2.66f, +2.66);
+
+        rightWall->m = std::make_shared<IdealDiffuse>();
+        rightWall->m->Kd = float3(25.f / 255.f, 255.f / 255.f, 20.f / 255.f);
+        rightWall->_min = float3(+2.66, 0.f, -2.66);
+        rightWall->_max = float3(+2.55, 2.66f, +2.66);
+
+        backWall->m = std::make_shared<IdealDiffuse>();
+        backWall->m->Kd = float3(0.9, 0.9, 0.9);
+        backWall->_min = float3(-2.66, 0.0f, -2.66);
+        backWall->_max = float3(+2.66, +2.66f, -2.55);
+
+        rendererState->scene.objects.push_back(floor);
+        rendererState->scene.objects.push_back(leftWall);
+        rendererState->scene.objects.push_back(rightWall);
+        rendererState->scene.objects.push_back(backWall);
+
+        //scene.objects.push_back(a);
+        //scene.objects.push_back(b);
+        //scene.objects.push_back(c);
+        rendererState->scene.objects.push_back(d);
+        rendererState->scene.objects.push_back(glassSphere);
+        rendererState->scene.objects.push_back(q);
+
+        q->q.reset(new Quad(float3(-0.5, 0, 0), float3(0, 1, 0), float3(1, 0, 0)));
+        q->m = std::make_shared<Emissive>();
+        q->m->Kd = float3(1, 0, 0);
+
+        std::shared_ptr<AreaLight> areaLight = std::make_shared<AreaLight>();
+        areaLight->intensity = float3(1, 1, 1);
+        areaLight->quad = q->q.get();
+        rendererState->scene.lights.push_back(areaLight);
+
+        // Traverse + build BVH accelerator for the objects we've added to the scene
+        {
+            scoped_timer bvh("BVH Generation");
+            //scene.accelerate();
+        }
+
+        // Generate a vector of all possible pixel locations to raytrace
+        for (int y = 0; y < rendererState->film->size.y; ++y)
+        {
+            for (int x = 0; x < rendererState->film->size.x; ++x)
+            {
+                rendererState->coordinates.push_back(int2(x, y));
+            }
+        }
+
+        coordinator.reset(new ThreadedRenderCoordinator(rendererState));
+
+        surface.setup(WIDTH, HEIGHT, GL_RGB, GL_RGB, GL_FLOAT, nullptr);
+    }
+
     int2 windowSize = win->get_window_size();
 
+    sceneTimer.start();
+
+    // Application main loop
     auto t0 = std::chrono::high_resolution_clock::now();
     while (!win->should_close())
     {
@@ -733,76 +703,77 @@ int main(int argc, char * argv[])
 
         if (inputState.mr)
         {
-            const linalg::aliases::float4 orientation = cam.get_orientation();
+            const linalg::aliases::float4 orientation = rendererState->camera.get_orientation();
             linalg::aliases::float3 move;
             if (inputState.bf) move -= qzdir(orientation);
             if (inputState.bl) move -= qxdir(orientation);
             if (inputState.bb) move += qzdir(orientation);
             if (inputState.br) move += qxdir(orientation);
-            if (length2(move) > 0) cam.position += normalize(move) * (timestep * 10);
+            if (length2(move) > 0)  rendererState->camera.position += normalize(move) * (timestep * 10);
         }
 
-        imgui->begin_frame();
-
-        glEnable(GL_DEPTH_TEST);
-
+        // Upload path-traced data to a gpu surface for realtime visualization
         {
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, cameraFramebuffer);
-            glViewport(0, 0, renderSize.x, renderSize.y);
-            glClearColor(1.f, 0.f, 1.f, 1.f);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            auto pixelsCopy = rendererState->film->samples;
+            int width = rendererState->film->size.x;
+            int height = rendererState->film->size.y;
+            flip_vertical_inplace(pixelsCopy, int2(width, height));
+            glTextureImage2DEXT(surface, GL_TEXTURE_2D, 0, GL_RGB, WIDTH, HEIGHT, 0, GL_RGB, GL_FLOAT, pixelsCopy.data());
         }
 
-        // Render to the GLFW window
-        std::vector<screen_viewport> viewports;
+        glPushMatrix();
+        glOrtho(0, windowSize.x, windowSize.y, 0, -1, +1);
 
-        Bounds2D rect{ { 0.f, 0.f },{ (float)windowSize.x,(float)windowSize.y } };
-
-        const float mid = (rect.min().x + rect.max().x) / 2.f;
-        screen_viewport leftviewport = { rect.min(),{ mid - 2.f, rect.max().y }, cameraRGBTexture };
-
-        viewports.clear();
-        viewports.push_back(leftviewport);
-        //viewports.push_back(rightViewport);
-
-        if (viewports.size())
-        {
-            glUseProgram(0);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        }
-
-        for (auto & v : viewports)
-        {
-            glViewport(v.bmin.x, windowSize.y - v.bmax.y, v.bmax.x - v.bmin.x, v.bmax.y - v.bmin.y);
-            glActiveTexture(GL_TEXTURE0);
-            glEnable(GL_TEXTURE_2D);
-            glBindTexture(GL_TEXTURE_2D, v.texture);
-            glBegin(GL_QUADS);
-            glTexCoord2f(0, 0); glVertex2f(-1, -1);
-            glTexCoord2f(1, 0); glVertex2f(+1, -1);
-            glTexCoord2f(1, 1); glVertex2f(+1, +1);
-            glTexCoord2f(0, 1); glVertex2f(-1, +1);
-            glEnd();
-            glDisable(GL_TEXTURE_2D);
-        }
-
-        if (should_take_screenshot)
-        {
-            std::cout << "Taking screenshot!" << std::endl;
-            should_take_screenshot = take_screenshot<3>(windowSize); // capture rgb buffer
-        }
-
-        gui::imgui_fixed_window_begin("Dataset Debug Tools", { { 0, windowSize.y - 128 },{ windowSize.x, windowSize.y } });
-        ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-        gui::imgui_fixed_window_end();
+        glUseProgram(0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        draw_texture_buffer(0.f, 0.f, (float)WIDTH, float(HEIGHT), surface);
+        glPopMatrix();
 
         gl_check_error(__FILE__, __LINE__);
 
-        imgui->end_frame();
+        // ImGui
+        {
+            imgui->begin_frame();
+
+            ImGui::Text("Application Runtime %.3lld seconds", sceneTimer.seconds().count());
+            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+            ImGui::InputFloat3("Camera Position", &rendererState->camera.get_pose().position[0]);
+            ImGui::InputFloat4("Camera Orientation", &rendererState->camera.get_pose().orientation[0]);
+            ImGui::ColorEdit3("Ambient Color", &rendererState->scene.ambient[0]);
+
+            if (ImGui::SliderFloat("Camera FoV", &fieldOfView, 45.f, 120.f))
+            {
+                coordinator->reset();
+                rendererState->film->set_field_of_view(fieldOfView);
+            }
+
+            if (ImGui::SliderInt("SPP", &rendererState->samplesPerPixel, 1, 8192))
+            {
+                coordinator->reset();
+            }
+
+            for (auto & t : coordinator->renderTimers)
+            {
+                ImGui::Text("%#010x %.3f", t.first, t.second.get());
+            }
+
+            if (ImGui::Button("Save *.png")) take_screenshot({ WIDTH, HEIGHT });
+
+            imgui->end_frame();
+        }
 
         frameCount++;
+
+        // Have we finished rendering? 
+        if (coordinator->is_idle() && takeScreenshot == true)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            takeScreenshot = take_screenshot({ WIDTH, HEIGHT });
+            sceneTimer.stop();
+            std::cout << "Render Saved..." << std::endl;
+        }
+
         win->swap_buffers();
     }
-
 }

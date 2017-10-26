@@ -11,24 +11,30 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\common\gl-imgui.cpp" />
-    <ClCompile Include="..\third_party\imgui\imgui.cpp" />
-    <ClCompile Include="..\third_party\imgui\imgui_draw.cpp" />
+    <ClCompile Include="common\gl-imgui.cpp" />
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="third_party\imgui\imgui.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_draw.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\common\gl-imgui.hpp" />
-    <ClInclude Include="..\third_party\imgui\imgui.h" />
-    <ClInclude Include="..\third_party\imgui\imgui_internal.h" />
+    <ClInclude Include="common\gl-api.hpp" />
+    <ClInclude Include="common\gl-imgui.hpp" />
+    <ClInclude Include="common\linalg.h" />
+    <ClInclude Include="common\linalg_util.hpp" />
+    <ClInclude Include="common\util.hpp" />
     <ClInclude Include="src\bsdf.hpp" />
     <ClInclude Include="src\bvh.hpp" />
+    <ClInclude Include="src\geometric.hpp" />
     <ClInclude Include="src\lights.hpp" />
     <ClInclude Include="src\objects.hpp" />
     <ClInclude Include="src\sampling.hpp" />
-    <ClInclude Include="src\util.hpp" />
+    <ClInclude Include="src\math-util.hpp" />
+    <ClInclude Include="third_party\imgui\imconfig.h" />
+    <ClInclude Include="third_party\imgui\imgui.h" />
+    <ClInclude Include="third_party\imgui\imgui_internal.h" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\third_party\glfw-3.1.2\glfw3.vcxproj">
+    <ProjectReference Include="third_party\glfw-3.1.2\glfw3.vcxproj">
       <Project>{be423e72-28c2-4fb7-9fe1-42aa2f393bbc}</Project>
     </ProjectReference>
   </ItemGroup>

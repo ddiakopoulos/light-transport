@@ -5,14 +5,6 @@ VisualStudioVersion = 14.0.25420.1
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "third-party", "third-party", "{ED43AFCE-901B-4D5F-A583-83ED193745AB}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "common", "common", "{FFA4D85D-5770-4D6A-AAC6-9C8D5FDB45D8}"
-	ProjectSection(SolutionItems) = preProject
-		common\gl-api.hpp = common\gl-api.hpp
-		common\linalg.h = common\linalg.h
-		common\linalg_util.hpp = common\linalg_util.hpp
-		common\util.hpp = common\util.hpp
-	EndProjectSection
-EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "light-transport", "light-transport.vcxproj", "{C0D12F0A-4967-4A9B-8720-5514B58DD270}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "glfw3", "third_party\glfw-3.1.2\glfw3.vcxproj", "{BE423E72-28C2-4FB7-9FE1-42AA2F393BBC}"
