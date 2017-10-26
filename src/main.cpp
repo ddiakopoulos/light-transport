@@ -34,6 +34,7 @@ using namespace gui;
 // http://www.rorydriscoll.com/2009/01/07/better-sampling/
 // http://www.cs.cornell.edu/courses/cs465/2004fa/lectures/22advray/22advray.pdf
 // http://vision.ime.usp.br/~acmt/hakyll/assets/files/wynn.pdf
+// https://graphics.stanford.edu/courses/cs348b-03/papers/veach-chapter9.pdf
 
 // ToDo
 // ----------------------------------------------------------------------------
@@ -182,7 +183,7 @@ struct Scene
             // Make a shadow ray to check for occlusion between surface and a direct light
             RayIntersection occlusion = scene_intersects({ surfaceInfo->P, lightWi });
 
-            // If it's not occluded  we can see the light source
+            // If it's not occluded we can see the light source
             if (!occlusion())
             {
                 // Sample from the BSDF
